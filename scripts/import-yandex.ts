@@ -94,35 +94,56 @@ const publisher = new GitHubPublisher();
 const existing = await publisher.catalog.read();
 const known = new Set(existing.materials.map((m) => m.sha256).filter(Boolean));
 let done = 0; let skipped = 0; let failed = 0;
+const sourceSeen = new Set(known);
+const candidates: YandexItem[] = [];
+for (const item of files) {
+  if (item.sha256 && sourceSeen.has(item.sha256)) { skipped += 1; continue; }
+  if (item.sha256) sourceSeen.add(item.sha256);
+  candidates.push(item);
+}
+const concurrency = Math.max(1, Math.min(8, Number(process.env.MIGRATION_CONCURRENCY) || 4));
+console.log(`Migration queue: ${candidates.length} unique files, ${skipped} duplicates skipped, concurrency ${concurrency}`);
 let pending: Awaited<ReturnType<typeof publisher.publish>>[] = [];
 async function flushCatalog() {
   if (!pending.length) return;
   await publisher.catalog.upsertMany(pending);
   pending = [];
 }
-for (const item of files) {
-  if (item.sha256 && known.has(item.sha256)) { skipped += 1; continue; }
+
+async function migrate(item: YandexItem) {
   const parts = item.path.split('/').filter(Boolean);
   let downloaded: Awaited<ReturnType<typeof download>> | undefined;
   try {
     downloaded = await download(item);
-    if (known.has(downloaded.sha256)) { skipped += 1; continue; }
+    if (known.has(downloaded.sha256)) return { item, skipped: true as const, sha256: downloaded.sha256 };
     const originalName = basename(item.path);
     const material = await publisher.publish({
       filePath: downloaded.path, originalName, mimeType: item.mime_type || 'application/octet-stream', sha256: downloaded.sha256,
       title: basename(originalName, extname(originalName)).replace(/[_-]+/g, ' '), description: `Импортировано из Яндекс Диска: ${item.path}`,
       course: parts[0] || 'Другое', subject: parts[1] || 'Без предмета', kind: inferKind(item), tags: [], source: 'admin', author: 'Yandex Disk migration',
     }, false);
-    pending.push(material);
-    if (pending.length >= 100) await flushCatalog();
-    known.add(downloaded.sha256); done += 1;
-    console.log(`[${done + skipped + failed}/${files.length}] ✓ ${item.path}`);
+    return { item, material, sha256: downloaded.sha256 };
   } catch (error) {
-    failed += 1; console.error(`[${done + skipped + failed}/${files.length}] ✗ ${item.path}:`, error);
-    await writeFile(join(process.cwd(), 'data', 'import-state.json'), JSON.stringify({ lastPath: item.path, done, skipped, failed }, null, 2));
+    return { item, error };
   } finally {
     if (downloaded) await import('node:fs/promises').then(({ unlink }) => unlink(downloaded!.path).catch(() => undefined));
   }
+}
+
+for (let index = 0; index < candidates.length; index += concurrency) {
+  const results = await Promise.all(candidates.slice(index, index + concurrency).map(migrate));
+  for (const result of results) {
+    if ('error' in result) {
+      failed += 1; console.error(`[${done + skipped + failed}/${files.length}] ✗ ${result.item.path}:`, result.error);
+      await writeFile(join(process.cwd(), 'data', 'import-state.json'), JSON.stringify({ lastPath: result.item.path, done, skipped, failed }, null, 2));
+    } else if ('skipped' in result) {
+      skipped += 1;
+    } else {
+      pending.push(result.material); known.add(result.sha256); done += 1;
+      console.log(`[${done + skipped + failed}/${files.length}] ✓ ${result.item.path}`);
+    }
+  }
+  if (pending.length >= 100) await flushCatalog();
 }
 await flushCatalog();
 console.log({ done, skipped, failed });

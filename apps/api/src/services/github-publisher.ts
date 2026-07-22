@@ -15,7 +15,7 @@ export type PublishInput = {
 export class GitHubPublisher {
   readonly octokit: Octokit;
   readonly catalog: CatalogService;
-  private readonly releaseCache = new Map<string, { id: number; assets: Map<string, string>; created: boolean }>();
+  private readonly releaseCache = new Map<string, Promise<{ id: number; assets: Map<string, string>; created: boolean }>>();
 
   constructor() {
     this.octokit = new Octokit({ auth: config.GITHUB_TOKEN });
@@ -31,25 +31,28 @@ export class GitHubPublisher {
     const key = `${repo}:${tag}`;
     const cached = this.releaseCache.get(key);
     if (cached) return cached;
-    let id: number; let created = false;
-    try {
-      const release = await this.octokit.rest.repos.getReleaseByTag({ owner: config.GITHUB_OWNER, repo, tag });
-      id = release.data.id;
-    } catch (error: any) {
-      if (error.status !== 404) throw error;
-      const release = await this.octokit.rest.repos.createRelease({
-        owner: config.GITHUB_OWNER, repo, tag_name: tag,
-        name: `${course} · пакет ${hash[0]?.toUpperCase() || '0'}`,
-        body: 'Автоматически сформированный пакет материалов CSD Library. Не удаляйте assets вручную: они связаны с общим каталогом.',
+    const loading = (async () => {
+      let id: number; let created = false;
+      try {
+        const release = await this.octokit.rest.repos.getReleaseByTag({ owner: config.GITHUB_OWNER, repo, tag });
+        id = release.data.id;
+      } catch (error: any) {
+        if (error.status !== 404) throw error;
+        const release = await this.octokit.rest.repos.createRelease({
+          owner: config.GITHUB_OWNER, repo, tag_name: tag,
+          name: `${course} · пакет ${hash[0]?.toUpperCase() || '0'}`,
+          body: 'Автоматически сформированный пакет материалов CSD Library. Не удаляйте assets вручную: они связаны с общим каталогом.',
+        });
+        id = release.data.id; created = true;
+      }
+      const assets = await this.octokit.paginate(this.octokit.rest.repos.listReleaseAssets, {
+        owner: config.GITHUB_OWNER, repo, release_id: id, per_page: 100,
       });
-      id = release.data.id; created = true;
-    }
-    const assets = await this.octokit.paginate(this.octokit.rest.repos.listReleaseAssets, {
-      owner: config.GITHUB_OWNER, repo, release_id: id, per_page: 100,
-    });
-    const result = { id, created, assets: new Map(assets.map((asset) => [asset.name, asset.browser_download_url])) };
-    this.releaseCache.set(key, result);
-    return result;
+      return { id, created, assets: new Map(assets.map((asset) => [asset.name, asset.browser_download_url])) };
+    })();
+    this.releaseCache.set(key, loading);
+    try { return await loading; }
+    catch (error) { this.releaseCache.delete(key); throw error; }
   }
 
   async publish(input: PublishInput, updateCatalog = true): Promise<Material> {
