@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "generatedAt": "2026-07-22T00:00:00.000Z",
+  "materials": [
+    {
+      "id": "demo-matan-guide",
+      "title": "Гайд по математическому анализу",
+      "description": "Основные определения, теоремы и советы по подготовке к экзамену.",
+      "course": "1 курс",
+      "subject": "Математический анализ",
+      "kind": "guide",
+      "tags": ["матан", "экзамен", "гайд"],
+      "path": "/1 курс/Математический анализ/Гайд.pdf",
+      "fileName": "Гайд.pdf",
+      "mimeType": "application/pdf",
+      "size": 2480128,
+      "sha256": "",
+      "downloadUrl": "https://disk.yandex.ru/d/uBxTJDaahuSjZA",
+      "previewUrl": "https://disk.yandex.ru/d/uBxTJDaahuSjZA",
+      "source": "yandex",
+      "addedAt": "2026-07-22T00:00:00.000Z",
+      "updatedAt": "2026-07-22T00:00:00.000Z"
+    }
+  ]
+}

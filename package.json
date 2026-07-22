@@ -1,0 +1,26 @@
+{
+  "name": "csd-library",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently -n WEB,API -c cyan,magenta \"npm run dev -w @csd/web\" \"npm run dev -w @csd/api\"",
+    "build": "npm run build -w @csd/shared && npm run build -w @csd/web && npm run build -w @csd/api",
+    "typecheck": "npm run build -w @csd/shared && npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "eslint .",
+    "import:yandex": "node --import tsx scripts/import-yandex.ts --publish",
+    "catalog:stats": "node --import tsx scripts/import-yandex.ts --dry-run",
+    "github:setup": "node --import tsx scripts/setup-github.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.31.0",
+    "concurrently": "^9.2.0",
+    "eslint": "^9.31.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.38.0"
+  },
+  "engines": { "node": ">=20" }
+}

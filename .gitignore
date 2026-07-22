@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+coverage
+.vite
+*.tsbuildinfo
+tmp
+data/import-state.json
+data/yandex-inventory.json
