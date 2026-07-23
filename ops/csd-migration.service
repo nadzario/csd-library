@@ -1,0 +1,19 @@
+[Unit]
+Description=CSD Yandex Disk to GitHub migration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nadzario/CSDGit
+ExecStart=/usr/bin/npm run import:yandex
+Restart=on-failure
+RestartSec=30s
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+StandardOutput=append:/home/nadzario/CSDGit/data/migration.log
+StandardError=append:/home/nadzario/CSDGit/data/migration.log
+
+[Install]
+WantedBy=default.target
