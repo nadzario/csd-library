@@ -10,7 +10,7 @@
     "typecheck": "npm run build -w @csd/shared && npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "lint": "eslint .",
-    "import:yandex": "node --import tsx scripts/import-yandex.ts --publish",
+    "import:yandex": "node --import tsx scripts/import-yandex.ts --publish --use-inventory",
     "catalog:stats": "node --import tsx scripts/import-yandex.ts --dry-run",
     "github:setup": "node --import tsx scripts/setup-github.ts"
   },

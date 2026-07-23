@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -16,13 +16,28 @@ type YandexItem = {
 
 const publicKey = process.env.YANDEX_PUBLIC_URL || 'https://disk.yandex.ru/d/uBxTJDaahuSjZA';
 const publish = process.argv.includes('--publish');
+const useInventory = process.argv.includes('--use-inventory');
 const inventoryPath = join(process.cwd(), 'data', 'yandex-inventory.json');
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function fetchWithRetry(url: string | URL, init?: RequestInit, attempts = 6): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, init);
+      if (response.ok || (response.status < 500 && response.status !== 429)) return response;
+      lastError = new Error(`HTTP ${response.status}: ${await response.text()}`);
+    } catch (error) { lastError = error; }
+    if (attempt < attempts) await wait(Math.min(8000, 500 * 2 ** (attempt - 1)));
+  }
+  throw lastError instanceof Error ? lastError : new Error('Network request failed');
+}
 
 async function list(path = '', offset = 0): Promise<YandexItem> {
   const url = new URL('https://cloud-api.yandex.net/v1/disk/public/resources');
   url.searchParams.set('public_key', publicKey); url.searchParams.set('path', path);
   url.searchParams.set('limit', '100'); url.searchParams.set('offset', String(offset));
-  const response = await fetch(url);
+  const response = await fetchWithRetry(url);
   if (!response.ok) throw new Error(`Yandex API ${response.status}: ${await response.text()}`);
   return response.json() as Promise<YandexItem>;
 }
@@ -64,7 +79,7 @@ function inferKind(item: YandexItem): MaterialKind {
 async function download(item: YandexItem) {
   const fresh = await list(item.path);
   if (!fresh.file) throw new Error(`No download URL for ${item.path}`);
-  const response = await fetch(fresh.file);
+  const response = await fetchWithRetry(fresh.file);
   if (!response.ok || !response.body) throw new Error(`Download ${response.status}: ${item.path}`);
   await mkdir(join(process.cwd(), 'tmp'), { recursive: true });
   const path = join(process.cwd(), 'tmp', `yandex-${createHash('sha1').update(item.path).digest('hex')}`);
@@ -75,7 +90,18 @@ async function download(item: YandexItem) {
 }
 
 console.log('Scanning the public Yandex Disk…');
-const files = await crawl();
+let files: YandexItem[];
+if (useInventory) {
+  try {
+    const inventory = JSON.parse(await readFile(inventoryPath, 'utf8')) as { publicKey?: string; files?: YandexItem[] };
+    if (inventory.publicKey !== publicKey || !Array.isArray(inventory.files) || !inventory.files.length) throw new Error('Inventory is missing or belongs to another public folder');
+    files = inventory.files;
+    console.log(`Using saved inventory with ${files.length} files.`);
+  } catch (error) {
+    console.warn('Saved inventory is unavailable, scanning from scratch:', error);
+    files = await crawl();
+  }
+} else files = await crawl();
 await mkdir(join(process.cwd(), 'data'), { recursive: true });
 await writeFile(inventoryPath, JSON.stringify({ scannedAt: new Date().toISOString(), publicKey, files }, null, 2));
 const bytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
