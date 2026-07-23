@@ -129,11 +129,29 @@ for (const item of files) {
 }
 const concurrency = Math.max(1, Math.min(8, Number(process.env.MIGRATION_CONCURRENCY) || 4));
 console.log(`Migration queue: ${candidates.length} unique files, ${skipped} duplicates skipped, concurrency ${concurrency}`);
-let pending: Awaited<ReturnType<typeof publisher.publish>>[] = [];
+const pending: Awaited<ReturnType<typeof publisher.publish>>[] = [];
+async function writeState(lastPath: string, status: 'running' | 'complete' | 'failed' = 'running') {
+  await writeFile(join(process.cwd(), 'data', 'import-state.json'), JSON.stringify({
+    status, updatedAt: new Date().toISOString(), lastPath, total: files.length,
+    unique: candidates.length, done, skipped, failed, pendingCatalog: pending.length,
+  }, null, 2));
+}
+await writeState('', 'running');
 async function flushCatalog() {
   if (!pending.length) return;
-  await publisher.catalog.upsertMany(pending);
-  pending = [];
+  const batch = [...pending];
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      await publisher.catalog.upsertMany(batch);
+      pending.splice(0, batch.length);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 6) await wait(Math.min(8000, 500 * 2 ** (attempt - 1)));
+    }
+  }
+  throw lastError;
 }
 
 async function migrate(item: YandexItem) {
@@ -161,7 +179,6 @@ for (let index = 0; index < candidates.length; index += concurrency) {
   for (const result of results) {
     if ('error' in result) {
       failed += 1; console.error(`[${done + skipped + failed}/${files.length}] ✗ ${result.item.path}:`, result.error);
-      await writeFile(join(process.cwd(), 'data', 'import-state.json'), JSON.stringify({ lastPath: result.item.path, done, skipped, failed }, null, 2));
     } else if ('skipped' in result) {
       skipped += 1;
     } else {
@@ -170,7 +187,9 @@ for (let index = 0; index < candidates.length; index += concurrency) {
     }
   }
   if (pending.length >= 100) await flushCatalog();
+  await writeState(results.at(-1)?.item.path || '', 'running');
 }
 await flushCatalog();
+await writeState(candidates.at(-1)?.path || '', failed ? 'failed' : 'complete');
 console.log({ done, skipped, failed });
 if (failed) process.exitCode = 1;
