@@ -78,11 +78,22 @@ export class GitHubPublisher {
         duplex: 'half',
       } as RequestInit);
       if (!response.ok) {
-        throw new Error(`GitHub upload failed: ${response.status} ${await response.text()}`);
+        const body = await response.text();
+        if (response.status === 422 && body.includes('already_exists')) {
+          const assets = await this.octokit.paginate(this.octokit.rest.repos.listReleaseAssets, {
+            owner: config.GITHUB_OWNER, repo, release_id: release.id, per_page: 100,
+          });
+          const existing = assets.find((asset) => asset.name.startsWith(input.sha256.slice(0, 12)));
+          if (existing) {
+            downloadUrl = existing.browser_download_url;
+            release.assets.set(assetName, downloadUrl);
+          } else throw new Error(`GitHub reported an existing asset but it could not be resolved: ${body}`);
+        } else throw new Error(`GitHub upload failed: ${response.status} ${body}`);
+      } else {
+        const asset = await response.json() as { browser_download_url: string };
+        downloadUrl = asset.browser_download_url;
+        release.assets.set(assetName, downloadUrl);
       }
-      const asset = await response.json() as { browser_download_url: string };
-      downloadUrl = asset.browser_download_url;
-      release.assets.set(assetName, downloadUrl);
     }
     const now = new Date().toISOString();
     const material = materialSchema.parse({
