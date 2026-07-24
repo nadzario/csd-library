@@ -18,17 +18,26 @@ const publicKey = process.env.YANDEX_PUBLIC_URL || 'https://disk.yandex.ru/d/uBx
 const publish = process.argv.includes('--publish');
 const useInventory = process.argv.includes('--use-inventory');
 const inventoryPath = join(process.cwd(), 'data', 'yandex-inventory.json');
+let yandexRateLimitedUntil = 0;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function fetchWithRetry(url: string | URL, init?: RequestInit, attempts = 6): Promise<Response> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const cooldown = yandexRateLimitedUntil - Date.now();
+    if (cooldown > 0) await wait(cooldown);
     try {
       const response = await fetch(url, init);
       if (response.ok || (response.status < 500 && response.status !== 429)) return response;
-      lastError = new Error(`HTTP ${response.status}: ${await response.text()}`);
+      const body = await response.text();
+      lastError = new Error(`HTTP ${response.status}: ${body}`);
+      if (response.status === 429) {
+        const cooldownMs = Math.max(60_000, Number(process.env.YANDEX_429_COOLDOWN_MS) || 300_000);
+        yandexRateLimitedUntil = Date.now() + cooldownMs;
+        console.warn(`Yandex download limit reached; pausing migration for ${Math.round(cooldownMs / 60_000)} minutes…`);
+      }
     } catch (error) { lastError = error; }
-    if (attempt < attempts) await wait(Math.min(8000, 500 * 2 ** (attempt - 1)));
+    if (attempt < attempts && yandexRateLimitedUntil <= Date.now()) await wait(Math.min(8000, 500 * 2 ** (attempt - 1)));
   }
   throw lastError instanceof Error ? lastError : new Error('Network request failed');
 }
@@ -117,7 +126,17 @@ if (!publish) {
 }
 
 const publisher = new GitHubPublisher();
-const existing = await publisher.catalog.read();
+let existing = await publisher.catalog.read();
+const sourcePathBySha = new Map(files.filter((item) => item.sha256).map((item) => [item.sha256!, item.path]));
+const pathRepairs = existing.materials
+  .filter((material) => sourcePathBySha.has(material.sha256) && material.path !== sourcePathBySha.get(material.sha256))
+  .map((material) => ({ ...material, path: sourcePathBySha.get(material.sha256)!, updatedAt: new Date().toISOString() }));
+if (pathRepairs.length) {
+  console.log(`Repairing full folder paths for ${pathRepairs.length} existing catalog entries…`);
+  await publisher.catalog.upsertMany(pathRepairs);
+  const repaired = new Map(pathRepairs.map((material) => [material.id, material]));
+  existing = { ...existing, materials: existing.materials.map((material) => repaired.get(material.id) || material) };
+}
 const known = new Set(existing.materials.map((m) => m.sha256).filter(Boolean));
 let done = 0; let skipped = 0; let failed = 0;
 const sourceSeen = new Set(known);
@@ -165,6 +184,7 @@ async function migrate(item: YandexItem) {
       filePath: downloaded.path, originalName, mimeType: item.mime_type || 'application/octet-stream', sha256: downloaded.sha256,
       title: basename(originalName, extname(originalName)).replace(/[_-]+/g, ' '), description: `Импортировано из Яндекс Диска: ${item.path}`,
       course: parts[0] || 'Другое', subject: parts[1] || 'Без предмета', kind: inferKind(item), tags: [], source: 'admin', author: 'Yandex Disk migration',
+      sourcePath: item.path,
     }, false);
     return { item, material, sha256: downloaded.sha256 };
   } catch (error) {

@@ -10,6 +10,7 @@ export type PublishInput = {
   filePath: string; originalName: string; mimeType: string; sha256: string;
   title: string; description: string; course: string; subject: string;
   kind: MaterialKind; tags: string[]; source: 'admin' | 'telegram'; author?: string;
+  sourcePath?: string;
 };
 
 export class GitHubPublisher {
@@ -99,7 +100,7 @@ export class GitHubPublisher {
     const material = materialSchema.parse({
       id, title: input.title, description: input.description, course: input.course,
       subject: input.subject, kind: input.kind, tags: input.tags,
-      path: `/${input.course}/${input.subject}/${input.originalName}`,
+      path: input.sourcePath || `/${input.course}/${input.subject}/${input.originalName}`,
       fileName: basename(input.originalName), mimeType: input.mimeType, size: fileStat.size,
       sha256: input.sha256, downloadUrl,
       previewUrl: downloadUrl, source: input.source, repository: repo,

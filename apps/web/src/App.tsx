@@ -3,6 +3,9 @@ import { Bot, ChevronDown, CircleAlert, FileStack, Github, Search, SlidersHorizo
 import type { Catalog, Material } from '@csd/shared';
 import { loadCatalog } from './lib/catalog';
 import { MaterialCard } from './components/MaterialCard';
+import { FolderGrid, type FolderItem } from './components/FolderGrid';
+import { PreviewModal } from './components/PreviewModal';
+import { pathParts } from './lib/files';
 
 const all = 'Все';
 
@@ -13,6 +16,8 @@ export function App() {
   const [course, setCourse] = useState(all);
   const [subject, setSubject] = useState(all);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [folderPath, setFolderPath] = useState<string[]>([]);
+  const [preview, setPreview] = useState<Material | null>(null);
 
   useEffect(() => { loadCatalog().then(setCatalog).catch((e: Error) => setError(e.message)); }, []);
   const materials = catalog?.materials || [];
@@ -26,8 +31,46 @@ export function App() {
     });
   }, [materials, query, course, subject]);
 
-  const clear = () => { setQuery(''); setCourse(all); setSubject(all); };
-  const newest = [...filtered].sort((a, b) => b.addedAt.localeCompare(a.addedAt));
+  const browser = useMemo(() => {
+    if (query.trim()) return {
+      folders: [] as FolderItem[],
+      files: [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true })),
+      total: filtered.length,
+    };
+    const folders = new Map<string, number>();
+    const files: Material[] = [];
+    let total = 0;
+    for (const material of filtered) {
+      const parts = pathParts(material.path);
+      if (!folderPath.every((segment, index) => parts[index] === segment)) continue;
+      total += 1;
+      if (parts.length === folderPath.length + 1) files.push(material);
+      else if (parts.length > folderPath.length + 1) {
+        const child = parts[folderPath.length]!;
+        folders.set(child, (folders.get(child) || 0) + 1);
+      }
+    }
+    return {
+      folders: [...folders].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true })),
+      files: files.sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true })),
+      total,
+    };
+  }, [filtered, folderPath, query]);
+
+  const clear = () => { setQuery(''); setCourse(all); setSubject(all); setFolderPath([]); };
+  const changeCourse = (value: string) => {
+    setCourse(value); setSubject(all); setFolderPath(value === all ? [] : [value]);
+  };
+  const changeSubject = (value: string) => {
+    setSubject(value);
+    if (course !== all) setFolderPath(value === all ? [course] : [course, value]);
+  };
+  const navigateFolder = (path: string[]) => {
+    setFolderPath(path);
+    setCourse(path[0] || all);
+    setSubject(path[1] || all);
+    setQuery('');
+  };
 
   return (
     <div className="app-shell">
@@ -56,13 +99,18 @@ export function App() {
             <button className="filter-toggle" onClick={() => setFiltersOpen(!filtersOpen)}><SlidersHorizontal size={17} /> Фильтры <ChevronDown size={16} /></button>
           </div>
           <div className={`filters ${filtersOpen ? 'open' : ''}`}>
-            <label>Курс<select value={course} onChange={(e) => { setCourse(e.target.value); setSubject(all); }}>{courses.map((x) => <option key={x}>{x}</option>)}</select></label>
-            <label>Предмет<select value={subject} onChange={(e) => setSubject(e.target.value)}>{subjects.map((x) => <option key={x}>{x}</option>)}</select></label>
-            {(query || course !== all || subject !== all) && <button className="clear" onClick={clear}><X size={15} /> Сбросить</button>}
-            <span className="result-count">Найдено: {filtered.length}</span>
+            <label>Курс<select value={course} onChange={(e) => changeCourse(e.target.value)}>{courses.map((x) => <option key={x}>{x}</option>)}</select></label>
+            <label>Предмет<select value={subject} onChange={(e) => changeSubject(e.target.value)}>{subjects.map((x) => <option key={x}>{x}</option>)}</select></label>
+            {(query || course !== all || subject !== all || folderPath.length > 0) && <button className="clear" onClick={clear}><X size={15} /> Сбросить</button>}
+            <span className="result-count">{query ? 'Найдено' : 'В папке'}: {browser.total}</span>
           </div>
 
-          {error ? <div className="state error"><CircleAlert /><h3>Не удалось загрузить каталог</h3><p>{error}</p></div> : !catalog ? <div className="state"><div className="loader" /><p>Собираем библиотеку…</p></div> : newest.length === 0 ? <div className="state"><Search /><h3>Ничего не найдено</h3><p>Попробуйте изменить запрос или фильтры.</p><button onClick={clear}>Показать всё</button></div> : <div className="materials-grid">{newest.map((m) => <MaterialCard material={m} key={m.id} />)}</div>}
+          {error ? <div className="state error"><CircleAlert /><h3>Не удалось загрузить каталог</h3><p>{error}</p></div> : !catalog ? <div className="state"><div className="loader" /><p>Собираем библиотеку…</p></div> : <>
+            {!query && <FolderGrid path={folderPath} folders={browser.folders} onNavigate={navigateFolder} />}
+            {browser.files.length > 0 && <div className="materials-caption"><b>{query ? 'Результаты поиска' : folderPath.at(-1) || 'Файлы'}</b><span>{browser.files.length} файлов</span></div>}
+            {browser.files.length > 0 && <div className="materials-grid">{browser.files.map((m) => <MaterialCard material={m} key={m.id} onPreview={setPreview} />)}</div>}
+            {browser.files.length === 0 && browser.folders.length === 0 && <div className="state"><Search /><h3>Ничего не найдено</h3><p>Попробуйте изменить запрос или вернуться в корень каталога.</p><button onClick={clear}>Показать всё</button></div>}
+          </>}
         </section>
 
         <section className="about" id="about">
@@ -72,6 +120,7 @@ export function App() {
         </section>
       </main>
       <footer><div className="brand small"><span>C</span><b>CSD Library</b></div><p>Некоммерческий студенческий проект</p><span><FileStack size={14} /> Каталог обновляется автоматически</span></footer>
+      {preview && <PreviewModal material={preview} onClose={() => setPreview(null)} />}
     </div>
   );
 }
