@@ -33,3 +33,9 @@ export function previewKind(material: Material): PreviewKind {
 export function pathParts(path: string) {
   return path.split('/').filter(Boolean);
 }
+
+export function externalDocumentUrl(downloadUrl: string) {
+  const viewer = new URL('https://docs.google.com/viewer');
+  viewer.searchParams.set('url', downloadUrl);
+  return viewer.toString();
+}

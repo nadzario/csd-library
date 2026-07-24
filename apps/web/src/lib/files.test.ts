@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Material } from '@csd/shared';
-import { extensionOf, formatOf, pathParts, previewKind } from './files';
+import { extensionOf, externalDocumentUrl, formatOf, pathParts, previewKind } from './files';
 
 const material = (fileName: string, mimeType = 'application/octet-stream') => ({
   fileName, mimeType,
@@ -23,5 +23,14 @@ describe('file presentation', () => {
     expect(pathParts('/3 курс/Кафедра/Предмет/Лекции/01.pdf')).toEqual([
       '3 курс', 'Кафедра', 'Предмет', 'Лекции', '01.pdf',
     ]);
+  });
+
+  it('opens Google document previews outside an iframe', () => {
+    const source = 'https://example.com/Конспект 1.pdf';
+    const viewer = new URL(externalDocumentUrl(source));
+
+    expect(viewer.origin + viewer.pathname).toBe('https://docs.google.com/viewer');
+    expect(viewer.searchParams.get('url')).toBe(source);
+    expect(viewer.searchParams.has('embedded')).toBe(false);
   });
 });

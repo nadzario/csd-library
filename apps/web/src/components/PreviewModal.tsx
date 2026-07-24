@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { Download, ExternalLink, FileQuestion, X } from 'lucide-react';
+import { Download, ExternalLink, FileQuestion, FileText, X } from 'lucide-react';
 import { formatBytes, type Material } from '@csd/shared';
-import { formatOf, previewKind } from '../lib/files';
+import { externalDocumentUrl, formatOf, previewKind } from '../lib/files';
 
 export function PreviewModal({ material, onClose }: { material: Material; onClose: () => void }) {
   const kind = previewKind(material);
@@ -14,8 +14,9 @@ export function PreviewModal({ material, onClose }: { material: Material; onClos
   }, [onClose]);
 
   const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(material.downloadUrl)}`;
-  const documentUrl = `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(material.downloadUrl)}`;
+  const documentUrl = externalDocumentUrl(material.downloadUrl);
   const imageUrl = `https://images.weserv.nl/?url=${encodeURIComponent(material.downloadUrl)}&output=webp`;
+  const externalPreview = kind === 'pdf' || kind === 'text';
 
   return (
     <div className="preview-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -29,9 +30,20 @@ export function PreviewModal({ material, onClose }: { material: Material; onClos
         </header>
         <div className={`preview-stage ${kind}`}>
           {kind === 'image' && <img src={imageUrl} alt={material.title} />}
-          {kind === 'pdf' && <iframe src={documentUrl} title={material.title} />}
           {kind === 'office' && <iframe src={officeUrl} title={material.title} />}
-          {kind === 'text' && <iframe src={documentUrl} title={material.title} />}
+          {externalPreview && (
+            <div className="preview-message">
+              <FileText />
+              <h4>Предпросмотр готов</h4>
+              <p>
+                Firefox не разрешает встраивать просмотрщик Google в другие сайты.
+                Откройте файл в отдельной вкладке — страница ошибки больше не появится.
+              </p>
+              <a href={documentUrl} target="_blank" rel="noreferrer">
+                <ExternalLink /> Открыть предпросмотр
+              </a>
+            </div>
+          )}
           {kind === 'unsupported' && <div className="preview-message"><FileQuestion /><h4>Предпросмотр недоступен</h4><p>Формат {formatOf(material)} можно скачать и открыть на устройстве.</p><a href={material.downloadUrl} target="_blank" rel="noreferrer"><ExternalLink /> Открыть файл</a></div>}
         </div>
         <footer className="preview-footer"><span>{material.course}</span><i /> <span>{material.subject}</span><i /> <span>{material.fileName}</span></footer>
