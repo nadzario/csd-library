@@ -13,7 +13,8 @@
     "import:yandex": "node --import tsx scripts/import-yandex.ts --publish --use-inventory",
     "catalog:stats": "node --import tsx scripts/import-yandex.ts --dry-run",
     "github:setup": "node --import tsx scripts/setup-github.ts",
-    "migration:status": "node --import tsx scripts/migration-status.ts"
+    "migration:status": "node --import tsx scripts/migration-status.ts",
+    "catalog:compress": "node --import tsx scripts/compress-catalog.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.31.0",

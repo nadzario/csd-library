@@ -2,6 +2,7 @@ import { Octokit } from '@octokit/rest';
 import { catalogSchema, emptyCatalog, type Catalog, type Material } from '@csd/shared';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { config } from '../config.js';
 
 export class CatalogService {
@@ -50,6 +51,25 @@ export class CatalogService {
       message: incoming.length === 1 ? `catalog: add ${incoming[0]!.title}` : `catalog: import ${incoming.length} materials`,
       content: Buffer.from(JSON.stringify(next, null, 2)).toString('base64'), sha,
     });
+    await this.writeCompressed(next);
     return next;
+  }
+
+  async writeCompressed(catalog: Catalog) {
+    if (!this.octokit) throw new Error('GitHub is not configured');
+    const content = gzipSync(Buffer.from(JSON.stringify(catalog)), { level: 9 });
+    let sha: string | undefined;
+    try {
+      const existing = await this.octokit.rest.repos.getContent({
+        owner: config.GITHUB_OWNER, repo: config.GITHUB_CATALOG_REPO, path: 'catalog.json.gz',
+      });
+      if ('sha' in existing.data) sha = existing.data.sha;
+    } catch (error: any) { if (error.status !== 404) throw error; }
+    await this.octokit.rest.repos.createOrUpdateFileContents({
+      owner: config.GITHUB_OWNER, repo: config.GITHUB_CATALOG_REPO, path: 'catalog.json.gz',
+      message: `catalog: compressed snapshot (${catalog.materials.length} materials)`,
+      content: content.toString('base64'), sha,
+    });
+    return content.length;
   }
 }
