@@ -19,27 +19,64 @@ const publish = process.argv.includes('--publish');
 const useInventory = process.argv.includes('--use-inventory');
 const inventoryPath = join(process.cwd(), 'data', 'yandex-inventory.json');
 let yandexRateLimitedUntil = 0;
+let yandexRateLimitStrikes = 0;
+let yandexRequestQueue = Promise.resolve();
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-async function fetchWithRetry(url: string | URL, init?: RequestInit, attempts = 6): Promise<Response> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const cooldown = yandexRateLimitedUntil - Date.now();
-    if (cooldown > 0) await wait(cooldown);
-    try {
-      const response = await fetch(url, init);
-      if (response.ok || (response.status < 500 && response.status !== 429)) return response;
-      const body = await response.text();
-      lastError = new Error(`HTTP ${response.status}: ${body}`);
-      if (response.status === 429) {
-        const cooldownMs = Math.max(60_000, Number(process.env.YANDEX_429_COOLDOWN_MS) || 300_000);
-        yandexRateLimitedUntil = Date.now() + cooldownMs;
-        console.warn(`Yandex download limit reached; pausing migration for ${Math.round(cooldownMs / 60_000)} minutes…`);
-      }
-    } catch (error) { lastError = error; }
-    if (attempt < attempts && yandexRateLimitedUntil <= Date.now()) await wait(Math.min(8000, 500 * 2 ** (attempt - 1)));
+async function serializeYandexRequest<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = yandexRequestQueue;
+  let release!: () => void;
+  yandexRequestQueue = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
   }
-  throw lastError instanceof Error ? lastError : new Error('Network request failed');
+}
+
+async function fetchWithRetry(url: string | URL, init?: RequestInit, attempts = 6): Promise<Response> {
+  return serializeYandexRequest(async () => {
+    let lastError: unknown;
+    let transientAttempt = 0;
+    const requestUrl = new URL(url);
+    const isFileDownload = requestUrl.hostname !== 'cloud-api.yandex.net';
+
+    while (true) {
+      const cooldown = yandexRateLimitedUntil - Date.now();
+      if (cooldown > 0) await wait(cooldown);
+      try {
+        const response = await fetch(url, init);
+        if (response.ok) {
+          if (isFileDownload) yandexRateLimitStrikes = 0;
+          return response;
+        }
+        if (response.status < 500 && response.status !== 429) return response;
+
+        const body = await response.text();
+        lastError = new Error(`HTTP ${response.status}: ${body}`);
+        if (response.status === 429) {
+          yandexRateLimitStrikes += 1;
+          const baseCooldownMs = Math.max(60_000, Number(process.env.YANDEX_429_COOLDOWN_MS) || 900_000);
+          const maxCooldownMs = Math.max(baseCooldownMs, Number(process.env.YANDEX_429_MAX_COOLDOWN_MS) || 7_200_000);
+          const cooldownMs = Math.min(maxCooldownMs, baseCooldownMs * 2 ** Math.min(yandexRateLimitStrikes - 1, 6));
+          yandexRateLimitedUntil = Date.now() + cooldownMs;
+          console.warn(
+            `Yandex download limit reached; one probe will retry in ${Math.round(cooldownMs / 60_000)} minutes `
+            + `(all ${Math.max(1, Number(process.env.MIGRATION_CONCURRENCY) || 4)} workers are waiting)…`,
+          );
+          continue;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+      transientAttempt += 1;
+      if (transientAttempt >= attempts) {
+        throw lastError instanceof Error ? lastError : new Error('Network request failed');
+      }
+      await wait(Math.min(8000, 500 * 2 ** (transientAttempt - 1)));
+    }
+  });
 }
 
 async function list(path = '', offset = 0): Promise<YandexItem> {
@@ -142,6 +179,7 @@ let done = 0; let skipped = 0; let failed = 0;
 const sourceSeen = new Set(known);
 const candidates: YandexItem[] = [];
 for (const item of files) {
+  if (item.size === 0) { skipped += 1; continue; }
   if (item.sha256 && sourceSeen.has(item.sha256)) { skipped += 1; continue; }
   if (item.sha256) sourceSeen.add(item.sha256);
   candidates.push(item);
