@@ -53,7 +53,7 @@ export function SubmitMaterial({ onClose }: { onClose: () => void }) {
           <form className="submission-form" onSubmit={submit}>
             <label className={`dropzone ${file ? 'selected' : ''}`}>
               <input type="file" name="file" onChange={(event) => setFile(event.target.files?.[0] || null)} />
-              {file ? <><File /><b>{file.name}</b><span>{formatBytes(file.size)} · нажмите, чтобы заменить</span></> : <><CloudUpload /><b>Выберите файл</b><span>PDF, документ, изображение или архив · до 100 МБ</span></>}
+              {file ? <><File /><b>{file.name}</b><span>{formatBytes(file.size)} · нажмите, чтобы заменить</span></> : <><CloudUpload /><b>Выберите файл</b><span>PDF, документ, изображение или архив · до 95 МБ</span></>}
             </label>
             <div className="field-grid">
               <label className="wide">Название<input name="title" required maxLength={180} placeholder="Что это за материал?" /></label>

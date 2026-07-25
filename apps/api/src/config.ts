@@ -14,7 +14,7 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().default(''),
   PUBLIC_SITE_URL: z.string().url().default('http://localhost:5173'),
   API_PUBLIC_URL: z.string().url().default('http://localhost:3000'),
-  PUBLIC_SUBMISSION_MAX_MB: z.coerce.number().int().positive().max(500).default(100),
+  PUBLIC_SUBMISSION_MAX_MB: z.coerce.number().int().positive().max(500).default(95),
 });
 
 const parsed = envSchema.parse(process.env);

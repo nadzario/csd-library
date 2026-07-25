@@ -1,0 +1,16 @@
+[Unit]
+Description=CSD Library temporary public HTTPS tunnel
+After=network-online.target csd-api.service
+Wants=network-online.target csd-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nadzario/CSDGit
+ExecStart=/usr/bin/node --import tsx scripts/run-api-tunnel.ts
+Restart=always
+RestartSec=20s
+StandardOutput=append:/home/nadzario/CSDGit/data/api-tunnel.log
+StandardError=append:/home/nadzario/CSDGit/data/api-tunnel.log
+
+[Install]
+WantedBy=default.target

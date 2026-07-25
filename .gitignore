@@ -15,3 +15,6 @@ data/migration.log
 data/migration.pid
 data/api.log
 data/submissions/
+data/api-public-url.txt
+data/api-tunnel.log
+bin/cloudflared
