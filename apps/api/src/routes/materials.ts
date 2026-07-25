@@ -27,11 +27,33 @@ export async function materialRoutes(app: FastifyInstance, publisher: GitHubPubl
     const limit = Math.min(Math.max(Number.parseInt(request.query.limit || '50', 10) || 50, 1), 100);
     const offset = Math.max(Number.parseInt(request.query.offset || '0', 10) || 0, 0);
     const all = await loadMaterials();
-    const filtered = query ? all.filter((material) => [
+    const filtered = (query ? all.filter((material) => [
       material.title, material.description, material.course, material.subject,
       material.path, material.fileName, ...material.tags,
-    ].some((value) => value.toLocaleLowerCase('ru').includes(query))) : all;
+    ].some((value) => value.toLocaleLowerCase('ru').includes(query))) : [...all])
+      .sort((left, right) => left.path.localeCompare(right.path, 'ru', { numeric: true }));
     return { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit };
+  });
+
+  app.get<{ Querystring: { path?: string } }>('/api/admin/folders', {
+    onRequest: [app.authenticate],
+  }, async (request, reply) => {
+    const parts = String(request.query.path || '').replaceAll('\\', '/').split('/').map((part) => part.trim()).filter(Boolean);
+    if (parts.some((part) => part === '.' || part === '..' || part.includes('\0'))) {
+      return reply.code(400).send({ error: 'Некорректный путь папки' });
+    }
+    const children = new Map<string, number>();
+    for (const material of await loadMaterials()) {
+      const materialParts = folderOf(material.path, material.fileName).split('/').filter(Boolean);
+      if (!parts.every((part, index) => materialParts[index] === part)) continue;
+      const child = materialParts[parts.length];
+      if (child) children.set(child, (children.get(child) || 0) + 1);
+    }
+    return {
+      path: parts.join('/'),
+      folders: [...children].map(([name, count]) => ({ name, count }))
+        .sort((left, right) => left.name.localeCompare(right.name, 'ru', { numeric: true })),
+    };
   });
 
   app.get<{ Params: { id: string } }>('/api/admin/materials/:id/file', {

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
-  ArrowLeft, Check, CheckCircle2, Clock3, Download, Eye, FileText, FolderTree,
-  KeyRound, Library, LoaderCircle, LogOut, Save, Search, ShieldCheck, Trash2, X,
+  ArrowLeft, Check, CheckCircle2, ChevronRight, Clock3, Download, Eye, FileText,
+  Folder, FolderPlus, FolderTree, Home, KeyRound, Library, LoaderCircle, LogOut,
+  Save, Search, ShieldCheck, Trash2, X,
 } from 'lucide-react';
 import {
   formatBytes, type Material, type MaterialAdminUpdate, type Submission, type SubmissionUpdate,
@@ -13,6 +14,7 @@ const empty: Submission[] = [];
 type Tab = 'queue' | 'catalog';
 type PreviewFile = Pick<Material, 'title' | 'fileName' | 'mimeType' | 'size' | 'course' | 'subject'>;
 type CatalogDraft = Material & { folderPath: string };
+type FolderTarget = 'submission' | 'catalog';
 
 function folderOf(material: Material) {
   const suffix = `/${material.fileName}`;
@@ -74,6 +76,59 @@ function AdminPreview({
   </div>;
 }
 
+function FolderPicker({
+  token, initialPath, onClose, onSelect,
+}: {
+  token: string; initialPath: string; onClose: () => void; onSelect: (path: string) => void;
+}) {
+  const [parts, setParts] = useState(() => initialPath.replaceAll('\\', '/').split('/').map((part) => part.trim()).filter(Boolean));
+  const [folders, setFolders] = useState<{ name: string; count: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [newFolder, setNewFolder] = useState('');
+  const path = parts.join('/');
+
+  useEffect(() => {
+    setLoading(true); setError('');
+    fetch(`${requireApiUrl()}/api/admin/folders?path=${encodeURIComponent(path)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }).then(async (response) => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Не удалось открыть папку');
+      setFolders(result.folders);
+    }).catch((value) => setError(value instanceof Error ? value.message : 'Ошибка папок'))
+      .finally(() => setLoading(false));
+  }, [path, token]);
+
+  const createFolder = (event: FormEvent) => {
+    event.preventDefault();
+    const name = newFolder.trim().replaceAll('/', ' ');
+    if (!name || name === '.' || name === '..') return;
+    setParts((current) => [...current, name]);
+    setNewFolder(''); setCreating(false);
+  };
+
+  return <div className="preview-backdrop folder-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="folder-picker" role="dialog" aria-modal="true" aria-label="Выбор папки">
+      <header><div><FolderTree /><span><b>Выберите папку</b><small>Переходите по каталогу как в проводнике</small></span></div><button onClick={onClose} aria-label="Закрыть"><X /></button></header>
+      <nav className="folder-breadcrumbs">
+        <button className={parts.length === 0 ? 'current' : ''} onClick={() => setParts([])}><Home /></button>
+        {parts.map((part, index) => <span key={`${part}-${index}`}><ChevronRight /><button className={index === parts.length - 1 ? 'current' : ''} onClick={() => setParts(parts.slice(0, index + 1))}>{part}</button></span>)}
+      </nav>
+      <div className="folder-picker-list">
+        {parts.length > 0 && <button className="folder-row parent" onClick={() => setParts(parts.slice(0, -1))}><ArrowLeft /><span><b>На уровень выше</b><small>{parts.slice(0, -1).join('/') || 'Корень каталога'}</small></span></button>}
+        {loading ? <div className="folder-picker-state"><LoaderCircle className="spin" /> Загружаем папки…</div>
+          : error ? <div className="folder-picker-state error">{error}</div>
+            : folders.length === 0 ? <div className="folder-picker-state"><Folder /><b>Папка пока пустая</b><span>Её всё равно можно выбрать или создать внутри новую.</span></div>
+              : folders.map((folder) => <button className="folder-row" key={folder.name} onClick={() => setParts([...parts, folder.name])}><Folder /><span><b>{folder.name}</b><small>{folder.count} материалов внутри</small></span><ChevronRight /></button>)}
+      </div>
+      {creating && <form className="new-folder-form" onSubmit={createFolder}><FolderPlus /><input value={newFolder} onChange={(event) => setNewFolder(event.target.value)} placeholder="Название новой папки" autoFocus /><button type="submit">Создать</button><button type="button" onClick={() => setCreating(false)}><X /></button></form>}
+      <footer><button className="secondary" onClick={() => setCreating(true)}><FolderPlus /> Новая папка</button><span>/{path || ''}</span><button className="submit" onClick={() => onSelect(path)}><Check /> Выбрать эту папку</button></footer>
+    </section>
+  </div>;
+}
+
 export function Admin() {
   const [token, setToken] = useState(() => sessionStorage.getItem('csd-admin-token') || '');
   const [password, setPassword] = useState('');
@@ -91,9 +146,12 @@ export function Admin() {
   const [catalogDraft, setCatalogDraft] = useState<CatalogDraft | null>(null);
   const [preview, setPreview] = useState<{ file: PreviewFile; blob: Blob; externalUrl?: string; footer?: string } | null>(null);
   const [previewProgress, setPreviewProgress] = useState<number | null | undefined>(undefined);
+  const [folderTarget, setFolderTarget] = useState<FolderTarget | null>(null);
+  const previewCache = useRef(new Map<string, Blob>());
 
   const logout = () => {
     sessionStorage.removeItem('csd-admin-token');
+    previewCache.current.clear();
     setToken(''); setSubmissions(empty); setDraft(null); setCatalogDraft(null);
   };
 
@@ -116,14 +174,16 @@ export function Admin() {
     setDraft(result.find((item: Submission) => item.id === nextId) || null);
   }
 
-  async function loadCatalog(query = catalogQuery, authToken = token) {
+  async function loadCatalog(query = catalogQuery, authToken = token, append = false) {
     if (!authToken) return;
     setBusy(true);
     try {
-      const response = await adminFetch(`/api/admin/materials?limit=50&query=${encodeURIComponent(query)}`, {}, authToken);
+      const offset = append ? catalogItems.length : 0;
+      const response = await adminFetch(`/api/admin/materials?limit=100&offset=${offset}&query=${encodeURIComponent(query)}`, {}, authToken);
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Не удалось загрузить каталог');
-      setCatalogItems(result.items); setCatalogTotal(result.total);
+      setCatalogItems((items) => append ? [...items, ...result.items] : result.items);
+      setCatalogTotal(result.total);
       if (catalogDraft) {
         const fresh = result.items.find((item: Material) => item.id === catalogDraft.id);
         if (fresh) setCatalogDraft({ ...fresh, folderPath: folderOf(fresh) });
@@ -224,9 +284,21 @@ export function Admin() {
   }
 
   async function openPreview(file: PreviewFile, endpoint: string, externalUrl?: string, footer?: string) {
-    setPreviewProgress(null); setError('');
+    setError('');
+    const cached = previewCache.current.get(endpoint);
+    if (cached) {
+      setPreview({ file, blob: cached, externalUrl, footer });
+      return;
+    }
+    setPreviewProgress(null);
     try {
       const blob = await downloadBlob(`${requireApiUrl()}${endpoint}`, token, setPreviewProgress);
+      previewCache.current.set(endpoint, blob);
+      while (previewCache.current.size > 5) {
+        const oldest = previewCache.current.keys().next().value;
+        if (oldest) previewCache.current.delete(oldest);
+        else break;
+      }
       setPreview({ file, blob, externalUrl, footer });
     } catch (value) {
       if (value instanceof Error && value.message === 'Сессия истекла') logout();
@@ -237,6 +309,12 @@ export function Admin() {
   if (!token) return <div className="admin-shell login-page"><a href="../" className="back"><ArrowLeft size={16} /> В библиотеку</a><form className="login-card" onSubmit={login}><div className="admin-logo"><ShieldCheck /></div><span className="section-kicker">CSD Library</span><h1>Вход для<br />модераторов</h1><p>Проверка материалов, предложенных студентами.</p><label>Пароль<div className="password-field"><KeyRound size={17} /><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required autoFocus /></div></label>{error && <div className="form-error">{error}</div>}<button className="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" /> : 'Войти в панель'}</button><span className={`login-status ${online ? 'ok' : ''}`}>{online === null ? 'Проверяем API…' : online ? 'Сервис доступен' : 'Публичный API не подключён'}</span></form></div>;
 
   const previewLabel = previewProgress === undefined ? 'Предпросмотр' : previewProgress === null ? 'Загрузка…' : `Загрузка ${previewProgress}%`;
+  const selectedFolderPath = folderTarget === 'submission' ? draft?.folderPath || '' : catalogDraft?.folderPath || '';
+  const selectFolder = (path: string) => {
+    if (folderTarget === 'submission') updateDraft({ folderPath: path });
+    if (folderTarget === 'catalog' && catalogDraft) setCatalogDraft({ ...catalogDraft, folderPath: path });
+    setFolderTarget(null);
+  };
 
   return <div className="admin-shell moderation-shell">
     <aside>
@@ -265,7 +343,7 @@ export function Admin() {
               <label className="wide">Название<input value={draft.title} onChange={(event) => updateDraft({ title: event.target.value })} /></label>
               <label>Раздел / курс<input value={draft.course} onChange={(event) => updateDraft({ course: event.target.value })} /></label>
               <label>Предмет<input value={draft.subject} onChange={(event) => updateDraft({ subject: event.target.value })} /></label>
-              <label className="wide">Путь папки <span className="field-hint">Можно создавать любую вложенность через /</span><div className="path-field"><FolderTree /><input value={draft.folderPath} onChange={(event) => updateDraft({ folderPath: event.target.value })} placeholder={`${draft.course}/${draft.subject}/Лекции/2026`} /></div></label>
+              <label className="wide">Папка материала <span className="field-hint">Выберите существующую или создайте новую</span><button type="button" className="folder-select" onClick={() => setFolderTarget('submission')}><Folder /><span><b>{draft.folderPath || 'Автоматически по курсу и предмету'}</b><small>{draft.folderPath ? `/${draft.folderPath}` : `/${draft.course}/${draft.subject}`}</small></span><ChevronRight /></button></label>
               <label>Тип<select value={draft.kind} onChange={(event) => updateDraft({ kind: event.target.value as Submission['kind'] })}><option value="lecture">Лекция</option><option value="seminar">Семинар</option><option value="exam">Экзамен</option><option value="book">Книга</option><option value="guide">Гайд</option><option value="homework">Задание</option><option value="other">Другое</option></select></label>
               <label>Теги<input value={draft.tags.join(', ')} onChange={(event) => updateDraft({ tags: event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean) })} /></label>
               <label className="wide">Описание<textarea rows={7} value={draft.description} onChange={(event) => updateDraft({ description: event.target.value })} placeholder="Добавьте понятное описание материала" /></label>
@@ -276,9 +354,10 @@ export function Admin() {
         </div>
       </div> : <div className="moderation-layout catalog-editor">
         <div className="submission-list">
-          <form className="catalog-search" onSubmit={(event) => { event.preventDefault(); loadCatalog().catch((value) => setError(value.message)); }}><Search /><input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="Название, предмет, путь…" /><button disabled={busy}>Найти</button></form>
-          <div className="queue-title"><b>Найдено</b><span>{catalogTotal}</span></div>
+          <form className="catalog-search" onSubmit={(event) => { event.preventDefault(); loadCatalog(catalogQuery, token, false).catch((value) => setError(value.message)); }}><Search /><input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="Название, предмет, путь…" /><button disabled={busy}>Найти</button></form>
+          <div className="queue-title"><b>{catalogQuery ? 'Найдено' : 'Все загруженные материалы'}</b><span>{catalogItems.length} из {catalogTotal}</span></div>
           {catalogItems.length === 0 ? <div className="queue-empty"><Library /><b>Материалы не найдены</b><span>Измените поисковый запрос.</span></div> : catalogItems.map((material) => <button key={material.id} className={material.id === catalogDraft?.id ? 'active' : ''} onClick={() => { setCatalogDraft({ ...material, tags: [...material.tags], folderPath: folderOf(material) }); setError(''); setNotice(''); }}><FileText /><span><b>{material.title}</b><small>{formatOf(material)} · {formatBytes(material.size)}</small><small>{material.path}</small></span></button>)}
+          {catalogItems.length < catalogTotal && <button className="load-more" disabled={busy} onClick={() => loadCatalog(catalogQuery, token, true).catch((value) => setError(value.message))}>{busy ? <LoaderCircle className="spin" /> : <Download />} Показать ещё 100</button>}
         </div>
         <div className="moderation-card">
           {!catalogDraft ? <div className="queue-empty large"><Library /><b>Выберите материал</b><span>Можно изменить его карточку и положение в каталоге.</span></div> : <>
@@ -287,7 +366,7 @@ export function Admin() {
               <label className="wide">Название<input value={catalogDraft.title} onChange={(event) => setCatalogDraft({ ...catalogDraft, title: event.target.value })} /></label>
               <label>Раздел / курс<input value={catalogDraft.course} onChange={(event) => setCatalogDraft({ ...catalogDraft, course: event.target.value })} /></label>
               <label>Предмет<input value={catalogDraft.subject} onChange={(event) => setCatalogDraft({ ...catalogDraft, subject: event.target.value })} /></label>
-              <label className="wide">Путь папки <span className="field-hint">Имя файла добавляется автоматически</span><div className="path-field"><FolderTree /><input value={catalogDraft.folderPath} onChange={(event) => setCatalogDraft({ ...catalogDraft, folderPath: event.target.value })} placeholder="1 курс/Кафедра/Предмет/Лекции/2026" /></div><small className="path-result">/{catalogDraft.folderPath.replace(/^\/+|\/+$/g, '')}/{catalogDraft.fileName}</small></label>
+              <label className="wide">Папка материала <span className="field-hint">Имя файла добавится автоматически</span><button type="button" className="folder-select" onClick={() => setFolderTarget('catalog')}><Folder /><span><b>{catalogDraft.folderPath || 'Корень каталога'}</b><small>/{catalogDraft.folderPath ? `${catalogDraft.folderPath}/` : ''}{catalogDraft.fileName}</small></span><ChevronRight /></button></label>
               <label>Тип<select value={catalogDraft.kind} onChange={(event) => setCatalogDraft({ ...catalogDraft, kind: event.target.value as Material['kind'] })}><option value="lecture">Лекция</option><option value="seminar">Семинар</option><option value="exam">Экзамен</option><option value="book">Книга</option><option value="guide">Гайд</option><option value="homework">Задание</option><option value="other">Другое</option></select></label>
               <label>Теги<input value={catalogDraft.tags.join(', ')} onChange={(event) => setCatalogDraft({ ...catalogDraft, tags: event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean) })} /></label>
               <label className="wide">Описание<textarea rows={8} value={catalogDraft.description} onChange={(event) => setCatalogDraft({ ...catalogDraft, description: event.target.value })} /></label>
@@ -299,5 +378,6 @@ export function Admin() {
       </div>}
     </section>
     {preview && <AdminPreview {...preview} onClose={() => setPreview(null)} />}
+    {folderTarget && <FolderPicker token={token} initialPath={selectedFolderPath} onClose={() => setFolderTarget(null)} onSelect={selectFolder} />}
   </div>;
 }
