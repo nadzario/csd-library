@@ -13,3 +13,4 @@ data/import-state.json
 data/yandex-inventory.json
 data/migration.log
 data/migration.pid
+data/api.log

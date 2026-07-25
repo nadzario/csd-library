@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { materialKindSchema } from '@csd/shared';
+import { config } from '../config.js';
 import { GitHubPublisher } from '../services/github-publisher.js';
 import { saveStream } from '../services/temp-file.js';
 
 export async function materialRoutes(app: FastifyInstance, publisher: GitHubPublisher) {
   app.get('/api/catalog', async (_request, reply) => reply.header('cache-control', 'public, max-age=60').send(await publisher.catalog.read()));
-  app.get('/api/health', async () => ({ ok: true, github: Boolean(process.env.GITHUB_TOKEN), bot: Boolean(process.env.TELEGRAM_BOT_TOKEN) }));
+  app.get('/api/health', async () => ({ ok: true, github: config.githubReady, bot: Boolean(config.TELEGRAM_BOT_TOKEN) }));
   app.post('/api/materials', { onRequest: [app.authenticate] }, async (request, reply) => {
     const fields: Record<string, string> = {};
     let upload: Awaited<ReturnType<typeof saveStream>> | undefined;
