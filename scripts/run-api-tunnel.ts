@@ -16,21 +16,10 @@ let configuring: Promise<void> | undefined;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function waitUntilHealthy(url: string) {
-  for (let attempt = 1; attempt <= 20; attempt += 1) {
-    try {
-      const response = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(10_000) });
-      if (response.ok) return;
-    } catch {
-      // The tunnel can need a few seconds for DNS and edge routing to become ready.
-    }
-    await wait(Math.min(15_000, attempt * 1_000));
-  }
-  throw new Error(`Tunnel did not become healthy: ${url}`);
-}
-
 async function publishUrl(url: string) {
-  await waitUntilHealthy(url);
+  // Cloudflared prints the URL before its edge connection finishes registering.
+  // A short delay avoids depending on the host DNS, which may be filtered by a VPN.
+  await wait(10_000);
   let previous = '';
   try { previous = (await readFile(statePath, 'utf8')).trim(); } catch {
     // The state file is created after the first successful tunnel.
