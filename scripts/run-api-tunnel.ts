@@ -13,6 +13,7 @@ const repository = process.env.GITHUB_OWNER
   ? `${process.env.GITHUB_OWNER}/csd-library`
   : 'nadzario/csd-library';
 let configuring: Promise<void> | undefined;
+let stopping = false;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -42,7 +43,7 @@ const onOutput = (chunk: Buffer) => {
   const text = chunk.toString();
   process.stdout.write(text);
   output = `${output}${text}`.slice(-20_000);
-  const url = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i)?.[0];
+  const url = output.match(/https:\/\/(?!api\.)[a-z0-9]+(?:-[a-z0-9]+){2,}\.trycloudflare\.com/i)?.[0];
   if (url && !configuring) {
     configuring = publishUrl(url).catch((error) => {
       console.error('Could not publish tunnel URL:', error);
@@ -56,9 +57,13 @@ tunnel.stderr.on('data', onOutput);
 tunnel.on('error', (error) => { console.error('Could not start cloudflared:', error); process.exitCode = 1; });
 tunnel.on('exit', (code, signal) => {
   console.log(`cloudflared stopped (${signal || code || 0})`);
-  if (!process.exitCode) process.exitCode = code || 1;
+  process.exit(stopping ? 0 : code || 1);
 });
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-  process.on(signal, () => tunnel.kill(signal));
+  process.on(signal, () => {
+    stopping = true;
+    tunnel.kill(signal);
+    setTimeout(() => process.exit(0), 5_000).unref();
+  });
 }
