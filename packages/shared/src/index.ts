@@ -12,6 +12,7 @@ export const submissionSchema = z.object({
   subject: z.string().min(1).max(180),
   kind: materialKindSchema.default('other'),
   tags: z.array(z.string().max(60)).max(20).default([]),
+  folderPath: z.string().max(1000).default(''),
   fileName: z.string().min(1).max(500),
   mimeType: z.string().max(200).default('application/octet-stream'),
   size: z.number().int().positive(),
@@ -22,7 +23,7 @@ export const submissionSchema = z.object({
 });
 
 export const submissionUpdateSchema = submissionSchema.pick({
-  title: true, description: true, course: true, subject: true, kind: true, tags: true,
+  title: true, description: true, course: true, subject: true, kind: true, tags: true, folderPath: true,
 }).partial();
 
 export const materialSchema = z.object({
@@ -53,11 +54,18 @@ export const catalogSchema = z.object({
   materials: z.array(materialSchema),
 });
 
+export const materialAdminUpdateSchema = materialSchema.pick({
+  title: true, description: true, course: true, subject: true, kind: true, tags: true,
+}).partial().extend({
+  folderPath: z.string().max(1000).optional(),
+});
+
 export type Material = z.infer<typeof materialSchema>;
 export type Catalog = z.infer<typeof catalogSchema>;
 export type MaterialKind = z.infer<typeof materialKindSchema>;
 export type Submission = z.infer<typeof submissionSchema>;
 export type SubmissionUpdate = z.infer<typeof submissionUpdateSchema>;
+export type MaterialAdminUpdate = z.infer<typeof materialAdminUpdateSchema>;
 
 export const emptyCatalog = (): Catalog => ({
   version: 1,

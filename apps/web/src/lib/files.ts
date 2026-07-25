@@ -12,7 +12,7 @@ export function extensionOf(fileName: string) {
   return extension && extension !== fileName ? extension.toLocaleLowerCase('ru') : '';
 }
 
-export function formatOf(material: Material) {
+export function formatOf(material: Pick<Material, 'fileName' | 'mimeType'>) {
   const extension = extensionOf(material.fileName);
   if (extension) return extension.toUpperCase();
   const subtype = material.mimeType.split('/')[1]?.split(/[;+]/)[0];

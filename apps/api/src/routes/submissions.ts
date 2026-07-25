@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { GitHubPublisher } from '../services/github-publisher.js';
 import { SubmissionService } from '../services/submissions.js';
 import { saveStream } from '../services/temp-file.js';
+import { buildMaterialPath } from '../lib/material-path.js';
 
 const required = ['title', 'course', 'subject'] as const;
 const clean = (value: string | undefined, max: number) => String(value || '').trim().slice(0, max);
@@ -50,6 +51,7 @@ export async function submissionRoutes(
         subject: clean(fields.subject, 180),
         kind: kind.data,
         tags: String(fields.tags || '').split(',').map((tag) => tag.trim().slice(0, 60)).filter(Boolean).slice(0, 20),
+        folderPath: clean(fields.folderPath, 1000),
         fileName: clean(fileName, 500),
         mimeType: clean(mimeType, 200),
         size: fileSize,
@@ -103,6 +105,7 @@ export async function submissionRoutes(
       subject: submission.subject,
       kind: submission.kind,
       tags: submission.tags,
+      sourcePath: buildMaterialPath(submission.folderPath, submission.fileName, submission.course, submission.subject),
       source: 'admin',
       author: submission.submitter ? `Предложил: ${submission.submitter}` : 'Предложено через сайт',
     });
