@@ -7,11 +7,14 @@ import rateLimit from '@fastify/rate-limit';
 import { config } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { materialRoutes } from './routes/materials.js';
+import { submissionRoutes } from './routes/submissions.js';
 import { GitHubPublisher } from './services/github-publisher.js';
+import { SubmissionService } from './services/submissions.js';
 import { createBot } from './bot/index.js';
 
 const app = Fastify({ logger: true, bodyLimit: 1024 * 1024 });
-await app.register(cors, { origin: config.NODE_ENV === 'production' ? config.PUBLIC_SITE_URL : true });
+const siteOrigin = new URL(config.PUBLIC_SITE_URL).origin;
+await app.register(cors, { origin: config.NODE_ENV === 'production' ? siteOrigin : true });
 await app.register(jwt, { secret: config.JWT_SECRET });
 await app.register(multipart, { limits: { files: 1, fileSize: 2 * 1024 * 1024 * 1024, fields: 12 } });
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
@@ -21,8 +24,10 @@ app.decorate('authenticate', async (request, reply) => {
 });
 
 const publisher = new GitHubPublisher();
+const submissions = new SubmissionService();
 await app.register(authRoutes);
 await app.register((instance) => materialRoutes(instance, publisher));
+await app.register((instance) => submissionRoutes(instance, publisher, submissions));
 
 const bot = createBot(publisher);
 const shutdown = async () => {

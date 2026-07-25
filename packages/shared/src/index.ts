@@ -4,6 +4,27 @@ export const materialKindSchema = z.enum([
   'lecture', 'seminar', 'exam', 'book', 'guide', 'homework', 'other',
 ]);
 
+export const submissionSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(1).max(180),
+  description: z.string().max(4000).default(''),
+  course: z.string().min(1).max(120),
+  subject: z.string().min(1).max(180),
+  kind: materialKindSchema.default('other'),
+  tags: z.array(z.string().max(60)).max(20).default([]),
+  fileName: z.string().min(1).max(500),
+  mimeType: z.string().max(200).default('application/octet-stream'),
+  size: z.number().int().positive(),
+  sha256: z.string().length(64),
+  submitter: z.string().max(180).default(''),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const submissionUpdateSchema = submissionSchema.pick({
+  title: true, description: true, course: true, subject: true, kind: true, tags: true,
+}).partial();
+
 export const materialSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -35,6 +56,8 @@ export const catalogSchema = z.object({
 export type Material = z.infer<typeof materialSchema>;
 export type Catalog = z.infer<typeof catalogSchema>;
 export type MaterialKind = z.infer<typeof materialKindSchema>;
+export type Submission = z.infer<typeof submissionSchema>;
+export type SubmissionUpdate = z.infer<typeof submissionUpdateSchema>;
 
 export const emptyCatalog = (): Catalog => ({
   version: 1,

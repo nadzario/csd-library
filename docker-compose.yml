@@ -7,6 +7,7 @@ services:
       - "3000:3000"
     volumes:
       - ./tmp:/app/tmp
+      - ./data/submissions:/app/data/submissions
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 30s

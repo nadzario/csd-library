@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/nadzario/CSDGit
-Environment=NODE_ENV=development
+Environment=NODE_ENV=production
 ExecStart=/usr/bin/node apps/api/dist/index.js
 Restart=on-failure
 RestartSec=10s
