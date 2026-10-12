@@ -4,3 +4,8 @@ node_modules
 .env
 tmp
 coverage
+data/submissions
+**/data/submissions
+data/yandex-inventory.json
+data/import-state.json
+data/*.log

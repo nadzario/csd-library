@@ -1,10 +1,8 @@
 import 'dotenv/config';
-import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
+import { saveStream } from '../apps/api/src/services/temp-file.js';
 import { materialKindSchema, type MaterialKind } from '@csd/shared';
 import { GitHubPublisher } from '../apps/api/src/services/github-publisher.js';
 
@@ -123,16 +121,13 @@ function inferKind(item: YandexItem): MaterialKind {
 }
 
 async function download(item: YandexItem) {
+  if ((item.size || 0) > 2 * 1024 ** 3) throw new Error(`File exceeds the GitHub asset limit: ${item.path}`);
   const fresh = await list(item.path);
+  if (item.sha256 && fresh.sha256 && item.sha256 !== fresh.sha256) throw new Error(`Changed inventory: ${item.path}`);
   if (!fresh.file) throw new Error(`No download URL for ${item.path}`);
   const response = await fetchWithRetry(fresh.file);
   if (!response.ok || !response.body) throw new Error(`Download ${response.status}: ${item.path}`);
-  await mkdir(join(process.cwd(), 'tmp'), { recursive: true });
-  const path = join(process.cwd(), 'tmp', `yandex-${createHash('sha1').update(item.path).digest('hex')}`);
-  const hash = createHash('sha256');
-  const tee = new Transform({ transform(chunk, _enc, done) { hash.update(chunk); done(null, chunk); } });
-  await pipeline(Readable.fromWeb(response.body as any), tee, createWriteStream(path));
-  return { path, sha256: hash.digest('hex') };
+  return saveStream(Readable.fromWeb(response.body as any), 2 * 1024 ** 3, { sha256: item.sha256 || fresh.sha256 });
 }
 
 console.log('Scanning the public Yandex Disk…');
@@ -164,9 +159,16 @@ if (!publish) {
 
 const publisher = new GitHubPublisher();
 let existing = await publisher.catalog.read();
-const sourcePathBySha = new Map(files.filter((item) => item.sha256).map((item) => [item.sha256!, item.path]));
+const sourcePaths = new Set(files.map((item) => item.path));
+const sourcePathBySha = new Map<string, string>();
+const ambiguousHashes = new Set<string>();
+for (const item of files) if (item.sha256) {
+  if (sourcePathBySha.has(item.sha256)) ambiguousHashes.add(item.sha256);
+  else sourcePathBySha.set(item.sha256, item.path);
+}
 const pathRepairs = existing.materials
-  .filter((material) => sourcePathBySha.has(material.sha256) && material.path !== sourcePathBySha.get(material.sha256))
+  .filter((material) => (material.source === 'yandex' || material.author === 'Yandex Disk migration')
+    && !sourcePaths.has(material.path) && sourcePathBySha.has(material.sha256) && !ambiguousHashes.has(material.sha256))
   .map((material) => ({ ...material, path: sourcePathBySha.get(material.sha256)!, updatedAt: new Date().toISOString() }));
 if (pathRepairs.length) {
   console.log(`Repairing full folder paths for ${pathRepairs.length} existing catalog entries…`);
@@ -228,7 +230,7 @@ async function migrate(item: YandexItem) {
   } catch (error) {
     return { item, error };
   } finally {
-    if (downloaded) await import('node:fs/promises').then(({ unlink }) => unlink(downloaded!.path).catch(() => undefined));
+    await downloaded?.cleanup();
   }
 }
 

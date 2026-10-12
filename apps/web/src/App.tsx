@@ -5,10 +5,10 @@ import { loadCatalog } from './lib/catalog';
 import { MaterialCard } from './components/MaterialCard';
 import { FolderGrid, type FolderItem } from './components/FolderGrid';
 import { PreviewModal } from './components/PreviewModal';
-import { SubmitMaterial } from './components/SubmitMaterial';
 import { pathParts } from './lib/files';
 
 const all = 'Все';
+const telegramBotUrl = 'https://t.me/csdrive_bot';
 
 export function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -19,7 +19,6 @@ export function App() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [folderPath, setFolderPath] = useState<string[]>([]);
   const [preview, setPreview] = useState<Material | null>(null);
-  const [submissionOpen, setSubmissionOpen] = useState(false);
 
   useEffect(() => { loadCatalog().then(setCatalog).catch((e: Error) => setError(e.message)); }, []);
   const materials = catalog?.materials || [];
@@ -61,16 +60,17 @@ export function App() {
 
   const clear = () => { setQuery(''); setCourse(all); setSubject(all); setFolderPath([]); };
   const changeCourse = (value: string) => {
-    setCourse(value); setSubject(all); setFolderPath(value === all ? [] : [value]);
+    setCourse(value); setSubject(all); setFolderPath([]);
   };
   const changeSubject = (value: string) => {
     setSubject(value);
-    if (course !== all) setFolderPath(value === all ? [course] : [course, value]);
+    setFolderPath([]);
   };
   const navigateFolder = (path: string[]) => {
     setFolderPath(path);
-    setCourse(path[0] || all);
-    setSubject(path[1] || all);
+    // Physical folders may differ from course/subject metadata after moderation.
+    setCourse(all);
+    setSubject(all);
     setQuery('');
   };
 
@@ -79,8 +79,7 @@ export function App() {
       <header>
         <a className="brand" href="#top" aria-label="CSD Library"><span>C</span><b>CSD Library</b></a>
         <nav><a href="#catalog">Материалы</a><a href="#about">О проекте</a></nav>
-        <button className="site-submit" onClick={() => setSubmissionOpen(true)}><Send size={16} /> Предложить материал</button>
-        <a className="bot-link" href={import.meta.env.VITE_TELEGRAM_BOT_URL || '#about'}><Bot size={17} /> Telegram-бот</a>
+        <a className="bot-link" href={telegramBotUrl}><Bot size={17} /> Telegram-бот</a>
       </header>
 
       <main id="top">
@@ -118,13 +117,12 @@ export function App() {
 
         <section className="about" id="about">
           <div><span className="section-kicker">Открытые знания</span><h2>Библиотека живёт,<br />пока мы ею делимся.</h2></div>
-          <p>Материалы хранятся в открытых GitHub-репозиториях. Нашли полезный конспект? Отправьте его через сайт — он появится в каталоге после проверки администратором.</p>
-          <div className="about-links"><button onClick={() => setSubmissionOpen(true)}><Send />Предложить материал</button><a href={import.meta.env.VITE_TELEGRAM_BOT_URL || '#'}><Bot />Telegram-бот</a><a href="https://github.com/nadzario/csd-library" target="_blank" rel="noreferrer"><Github />Исходный код</a></div>
+          <p>Материалы хранятся в открытых GitHub-репозиториях. Работа с материалами и связь с библиотекой — через Telegram-бота.</p>
+          <div className="about-links"><a href={telegramBotUrl}><Send />Telegram-бот</a><a href="https://github.com/nadzario/csd-library" target="_blank" rel="noreferrer"><Github />Исходный код</a></div>
         </section>
       </main>
       <footer><div className="brand small"><span>C</span><b>CSD Library</b></div><p>Некоммерческий студенческий проект</p><span><FileStack size={14} /> Каталог обновляется автоматически</span></footer>
       {preview && <PreviewModal material={preview} onClose={() => setPreview(null)} />}
-      {submissionOpen && <SubmitMaterial onClose={() => setSubmissionOpen(false)} />}
     </div>
   );
 }

@@ -8,7 +8,10 @@ const same = (left: string, right: string) => {
 };
 
 export async function authRoutes(app: FastifyInstance) {
-  app.post<{ Body: { password?: string } }>('/api/auth/login', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+  app.post<{ Body: { password?: string } }>('/api/auth/login', {
+    schema: { body: { type: 'object', required: ['password'], properties: { password: { type: 'string', minLength: 1, maxLength: 512 } }, additionalProperties: false } },
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     if (!request.body?.password || !same(request.body.password, config.ADMIN_PASSWORD)) return reply.code(401).send({ error: 'Неверный пароль' });
     return { token: await reply.jwtSign({ role: 'admin' }, { expiresIn: '12h' }) };
   });

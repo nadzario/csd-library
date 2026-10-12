@@ -39,12 +39,19 @@ export class GitHubPublisher {
         id = release.data.id;
       } catch (error: any) {
         if (error.status !== 404) throw error;
-        const release = await this.octokit.rest.repos.createRelease({
-          owner: config.GITHUB_OWNER, repo, tag_name: tag,
-          name: `${course} · пакет ${hash[0]?.toUpperCase() || '0'}`,
-          body: 'Автоматически сформированный пакет материалов CSD Library. Не удаляйте assets вручную: они связаны с общим каталогом.',
-        });
-        id = release.data.id; created = true;
+        try {
+          const release = await this.octokit.rest.repos.createRelease({
+            owner: config.GITHUB_OWNER, repo, tag_name: tag,
+            name: `${course} · пакет ${hash[0]?.toUpperCase() || '0'}`,
+            body: 'Автоматически сформированный пакет материалов CSD Library. Не удаляйте assets вручную: они связаны с общим каталогом.',
+          });
+          id = release.data.id; created = true;
+        } catch (createError: any) {
+          if (createError.status !== 422) throw createError;
+          // A second API/import process may have created this bucket first.
+          const release = await this.octokit.rest.repos.getReleaseByTag({ owner: config.GITHUB_OWNER, repo, tag });
+          id = release.data.id;
+        }
       }
       const assets = await this.octokit.paginate(this.octokit.rest.repos.listReleaseAssets, {
         owner: config.GITHUB_OWNER, repo, release_id: id, per_page: 100,
@@ -68,6 +75,7 @@ export class GitHubPublisher {
       const uploadUrl = `https://uploads.github.com/repos/${encodeURIComponent(config.GITHUB_OWNER)}/${encodeURIComponent(repo)}/releases/${release.id}/assets?name=${encodeURIComponent(assetName)}`;
       const response = await fetch(uploadUrl, {
         method: 'POST',
+        redirect: 'error', signal: AbortSignal.timeout(300_000),
         headers: {
           Authorization: `Bearer ${config.GITHUB_TOKEN}`,
           Accept: 'application/vnd.github+json',

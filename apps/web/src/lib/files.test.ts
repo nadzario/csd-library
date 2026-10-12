@@ -25,6 +25,14 @@ describe('file presentation', () => {
     ]);
   });
 
+  it('does not select active previews from a disguised filename or MIME', () => {
+    expect(previewKind(material('evil.pdf', 'text/html'))).toBe('text');
+    expect(previewKind(material('evil.pdf', 'application/octet-stream'))).toBe('unsupported');
+    expect(previewKind(material('evil.jpg', 'text/html'))).toBe('text');
+    expect(previewKind(material('evil.svg', 'image/svg+xml'))).toBe('unsupported');
+    expect(previewKind(material('report.pdf', 'application/pdf'))).toBe('pdf');
+  });
+
   it('opens Google document previews outside an iframe', () => {
     const source = 'https://example.com/Конспект 1.pdf';
     const viewer = new URL(externalDocumentUrl(source));

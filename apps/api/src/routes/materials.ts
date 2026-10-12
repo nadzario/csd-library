@@ -7,6 +7,8 @@ import { config } from '../config.js';
 import { buildMaterialPath, folderOf } from '../lib/material-path.js';
 import { GitHubPublisher } from '../services/github-publisher.js';
 import { saveStream } from '../services/temp-file.js';
+import { fileResponse } from '../lib/file-response.js';
+import { fetchReleaseAsset } from '../lib/release-download.js';
 
 export async function materialRoutes(app: FastifyInstance, publisher: GitHubPublisher) {
   let cache: { materials: Material[]; expiresAt: number } | undefined;
@@ -61,15 +63,17 @@ export async function materialRoutes(app: FastifyInstance, publisher: GitHubPubl
   }, async (request, reply) => {
     const material = (await loadMaterials()).find((item) => item.id === request.params.id);
     if (!material) return reply.code(404).send({ error: 'Материал не найден' });
-    const upstream = await fetch(material.downloadUrl);
+    const upstream = await fetchReleaseAsset(material.downloadUrl);
     if (!upstream.ok || !upstream.body) return reply.code(502).send({ error: 'GitHub не отдал файл' });
-    const encodedName = encodeURIComponent(material.fileName);
+    const response = fileResponse(material.fileName);
     const length = upstream.headers.get('content-length');
     if (length) reply.header('content-length', length);
     return reply
-      .type(material.mimeType)
+      .type(response.type)
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "sandbox; default-src 'none'")
       .header('cache-control', 'private, max-age=300')
-      .header('content-disposition', `inline; filename*=UTF-8''${encodedName}`)
+      .header('content-disposition', response.disposition)
       .send(Readable.fromWeb(upstream.body as any));
   });
 
@@ -101,15 +105,16 @@ export async function materialRoutes(app: FastifyInstance, publisher: GitHubPubl
     const fields: Record<string, string> = {};
     let upload: Awaited<ReturnType<typeof saveStream>> | undefined;
     let fileName = ''; let mimeType = 'application/octet-stream';
-    for await (const part of request.parts()) {
-      if (part.type === 'file') {
-        if (upload) return reply.code(400).send({ error: 'Можно загрузить только один файл' });
-        fileName = part.filename; mimeType = part.mimetype; upload = await saveStream(part.file);
-        if (part.file.truncated) { await upload.cleanup(); upload = undefined; return reply.code(413).send({ error: 'Файл превышает лимит 2 ГБ' }); }
-      } else fields[part.fieldname] = String(part.value);
-    }
-    if (!upload) return reply.code(400).send({ error: 'Файл обязателен' });
     try {
+      for await (const part of request.parts()) {
+        if (part.type === 'file') {
+          if (upload) return reply.code(400).send({ error: 'Можно загрузить только один файл' });
+          fileName = part.filename; mimeType = part.mimetype;
+          upload = await saveStream(part.file, 2 * 1024 ** 3);
+          if (part.file.truncated) return reply.code(413).send({ error: 'Файл превышает лимит 2 ГБ' });
+        } else fields[part.fieldname] = String(part.value);
+      }
+      if (!upload) return reply.code(400).send({ error: 'Файл обязателен' });
       for (const key of ['title', 'course', 'subject']) if (!fields[key]?.trim()) return reply.code(400).send({ error: `Поле ${key} обязательно` });
       const material = await publisher.publish({
         filePath: upload.path, originalName: fileName, mimeType, sha256: upload.sha256,
@@ -120,6 +125,6 @@ export async function materialRoutes(app: FastifyInstance, publisher: GitHubPubl
       });
       cache = undefined;
       return reply.code(201).send(material);
-    } finally { await upload.cleanup(); }
+    } finally { await upload?.cleanup(); }
   });
 }

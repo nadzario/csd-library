@@ -23,8 +23,9 @@ export type PreviewKind = 'image' | 'pdf' | 'text' | 'office' | 'unsupported';
 
 export function previewKind(material: Material): PreviewKind {
   const extension = extensionOf(material.fileName);
-  if (material.mimeType.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'tif', 'tiff'].includes(extension)) return 'image';
-  if (material.mimeType.includes('pdf') || extension === 'pdf') return 'pdf';
+  const mimeType = material.mimeType.split(';')[0]?.trim().toLowerCase();
+  if (['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff'].includes(mimeType)) return 'image';
+  if (mimeType === 'application/pdf') return 'pdf';
   if (material.mimeType.startsWith('text/') || textExtensions.has(extension)) return 'text';
   if (officeExtensions.has(extension)) return 'office';
   return 'unsupported';

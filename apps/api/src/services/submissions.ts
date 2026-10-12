@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { config } from '../config.js';
 import { basename, join } from 'node:path';
 import {
   submissionSchema, submissionUpdateSchema,
@@ -13,6 +15,7 @@ export class SubmissionService {
   private mutation = Promise.resolve();
   private readonly filesRoot: string;
   private readonly indexPath: string;
+  private readonly uploads = new Set<symbol>();
 
   constructor(root = join(process.cwd(), 'data', 'submissions')) {
     this.filesRoot = join(root, 'files');
@@ -36,8 +39,10 @@ export class SubmissionService {
 
   private async writeIndex(submissions: Submission[]) {
     const temporary = `${this.indexPath}.${randomUUID()}.tmp`;
-    await writeFile(temporary, JSON.stringify(submissions, null, 2), { mode: 0o600 });
-    await rename(temporary, this.indexPath);
+    try {
+      await writeFile(temporary, JSON.stringify(submissions, null, 2), { mode: 0o600 });
+      await rename(temporary, this.indexPath);
+    } finally { await rm(temporary, { force: true }); }
   }
 
   private async mutate<T>(operation: (submissions: Submission[]) => Promise<T>) {
@@ -64,11 +69,42 @@ export class SubmissionService {
     return (await this.readIndex()).find((submission) => submission.id === id);
   }
 
+  async reserveUpload() {
+    return this.mutate(async (submissions) => {
+      if (this.uploads.size >= config.PUBLIC_UPLOAD_CONCURRENCY) {
+        throw Object.assign(new Error('Слишком много одновременных загрузок. Попробуйте позже.'), { statusCode: 503 });
+      }
+      const bytes = submissions.reduce((sum, item) => sum + item.size, 0);
+      if (submissions.length + this.uploads.size >= config.PUBLIC_QUEUE_MAX_FILES
+        || bytes + (this.uploads.size + 1) * config.PUBLIC_SUBMISSION_MAX_MB * 1024 ** 2 > config.PUBLIC_QUEUE_MAX_MB * 1024 ** 2) {
+        throw Object.assign(new Error('Очередь модерации заполнена. Попробуйте позже.'), { statusCode: 503 });
+      }
+      const reservation = Symbol();
+      this.uploads.add(reservation);
+      return () => { this.uploads.delete(reservation); };
+    });
+  }
+
   async create(input: NewSubmission, temporaryFile: string) {
     return this.mutate(async (submissions) => {
       const now = new Date().toISOString();
       const submission = submissionSchema.parse({ ...input, id: randomUUID(), createdAt: now, updatedAt: now });
-      await rename(temporaryFile, this.filePath(submission.id));
+      const destination = this.filePath(submission.id);
+      try { await rename(temporaryFile, destination); }
+      catch (error: any) {
+        if (error.code !== 'EXDEV') throw error;
+        // Compose mounts tmp and the queue separately: rename cannot cross mounts.
+        const partial = `${destination}.partial`;
+        try {
+          await copyFile(temporaryFile, partial, constants.COPYFILE_EXCL);
+          await rename(partial, destination);
+          await rm(temporaryFile);
+        } catch (copyError) {
+          await rm(partial, { force: true });
+          await rm(destination, { force: true });
+          throw copyError;
+        }
+      }
       try {
         await this.writeIndex([...submissions, submission]);
       } catch (error) {

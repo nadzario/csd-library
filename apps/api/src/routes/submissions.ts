@@ -6,6 +6,7 @@ import { GitHubPublisher } from '../services/github-publisher.js';
 import { SubmissionService } from '../services/submissions.js';
 import { saveStream } from '../services/temp-file.js';
 import { buildMaterialPath } from '../lib/material-path.js';
+import { fileResponse } from '../lib/file-response.js';
 
 const required = ['title', 'course', 'subject'] as const;
 const clean = (value: string | undefined, max: number) => String(value || '').trim().slice(0, max);
@@ -18,18 +19,20 @@ export async function submissionRoutes(
   app.post('/api/submissions', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request, reply) => {
+    const releaseUpload = await submissions.reserveUpload();
     const fields: Record<string, string> = {};
     let upload: Awaited<ReturnType<typeof saveStream>> | undefined;
     let fileName = '';
     let mimeType = 'application/octet-stream';
 
     try {
-      for await (const part of request.parts()) {
+      const maxBytes = config.PUBLIC_SUBMISSION_MAX_MB * 1024 ** 2;
+      for await (const part of request.parts({ limits: { fileSize: maxBytes, files: 1, fields: 12 } })) {
         if (part.type === 'file') {
           if (upload) return reply.code(400).send({ error: 'Можно отправить только один файл' });
           fileName = part.filename;
           mimeType = part.mimetype;
-          upload = await saveStream(part.file);
+          upload = await saveStream(part.file, maxBytes);
           if (part.file.truncated) return reply.code(413).send({ error: 'Файл превышает серверный лимит' });
         } else fields[part.fieldname] = String(part.value);
       }
@@ -62,6 +65,7 @@ export async function submissionRoutes(
       return reply.code(201).send({ accepted: true, id: submission.id });
     } finally {
       await upload?.cleanup();
+      releaseUpload();
     }
   });
 
@@ -72,11 +76,13 @@ export async function submissionRoutes(
   }, async (request, reply) => {
     const submission = await submissions.find(request.params.id);
     if (!submission) return reply.code(404).send({ error: 'Заявка не найдена' });
-    const encodedName = encodeURIComponent(submission.fileName);
+    const response = fileResponse(submission.fileName);
     return reply
-      .type(submission.mimeType)
+      .type(response.type)
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "sandbox; default-src 'none'")
       .header('content-length', submission.size)
-      .header('content-disposition', `inline; filename*=UTF-8''${encodedName}`)
+      .header('content-disposition', response.disposition)
       .send(submissions.stream(submission.id));
   });
 

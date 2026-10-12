@@ -14,9 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      VITE_API_URL: ${{ vars.API_PUBLIC_URL }}
       VITE_CATALOG_URL: ${{ vars.CATALOG_PUBLIC_URL }}
-      VITE_TELEGRAM_BOT_URL: ${{ vars.TELEGRAM_BOT_URL }}
       BASE_PATH: ${{ vars.BASE_PATH }}
     steps:
       - uses: actions/checkout@v4

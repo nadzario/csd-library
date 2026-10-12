@@ -116,13 +116,11 @@ export function createBot(publisher: GitHubPublisher) {
     if (!material) return ctx.editMessageText('Материал не найден — каталог мог обновиться. Нажмите /materials.');
     const course = callbackKey(material.course); const subject = callbackKey(`${material.course}\0${material.subject}`);
     const keyboard = new InlineKeyboard().url('⬇️ Просмотреть / скачать', material.downloadUrl).row().text('← К списку', `subject:${course}:${subject}:0`);
-    return ctx.editMessageText(materialText(material), { reply_markup: keyboard });
+    return ctx.editMessageText(materialText(material).slice(0, 4000), { reply_markup: keyboard });
   });
   bot.command('admin', async (ctx) => {
     if (!ctx.from || !config.adminTelegramIds.has(ctx.from.id)) return ctx.reply('Нет доступа.');
-    return ctx.reply('Откройте панель администратора:', {
-      reply_markup: new InlineKeyboard().url('Админ-панель', `${config.PUBLIC_SITE_URL.replace(/\/$/, '')}/admin`),
-    });
+    return ctx.reply('У вас есть права на публикацию. Отправьте документ с подписью:\nКурс | Предмет | Тип | Название | теги');
   });
   bot.on('message:document', async (ctx) => {
     if (!config.adminTelegramIds.has(ctx.from.id)) return ctx.reply('Отправлять материалы могут только администраторы.');
@@ -137,7 +135,7 @@ export function createBot(publisher: GitHubPublisher) {
       if (!file.file_path) throw new Error('Telegram did not return a file path');
       const response = await fetch(`https://api.telegram.org/file/bot${config.TELEGRAM_BOT_TOKEN}/${file.file_path}`);
       if (!response.ok || !response.body) throw new Error(`Telegram download failed: ${response.status}`);
-      saved = await saveStream(Readable.fromWeb(response.body as any));
+      saved = await saveStream(Readable.fromWeb(response.body as any), 2 * 1024 ** 3);
       const material = await publisher.publish({
         filePath: saved.path, originalName: ctx.message.document.file_name || 'material',
         mimeType: ctx.message.document.mime_type || 'application/octet-stream', sha256: saved.sha256,
@@ -152,8 +150,9 @@ export function createBot(publisher: GitHubPublisher) {
       await ctx.api.editMessageText(ctx.chat.id, status.message_id, `❌ Не удалось опубликовать: ${message.slice(0, 300)}`);
     } finally { await saved?.cleanup(); }
   });
-  bot.catch(async ({ error, ctx }) => {
-    console.error('Telegram bot error:', error);
+  bot.catch(async ({ ctx }) => {
+    // grammy error objects can include Telegram URLs containing the bot token.
+    console.error('Telegram bot request failed');
     await ctx.reply('Не удалось открыть каталог. Попробуйте ещё раз через минуту.').catch(() => undefined);
   });
   return bot;
